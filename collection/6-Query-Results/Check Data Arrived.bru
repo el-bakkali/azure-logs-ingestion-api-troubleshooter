@@ -1,0 +1,144 @@
+meta {
+  name: Check Data Arrived
+  type: http
+  seq: 1
+}
+
+post {
+  url: https://api.loganalytics.azure.com/v1/workspaces/{{workspaceId}}/query
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{armToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "{{tableName}} | where Computer startswith 'TroubleshooterTest' | order by TimeGenerated desc | take 10"
+  }
+}
+
+script:pre-request {
+  console.log("════════════════════════════════════════════════════");
+  console.log("QUERYING LOG ANALYTICS");
+  console.log("════════════════════════════════════════════════════");
+  console.log("Looking for test records with Computer starting");
+  console.log("with 'TroubleshooterTest' in table: " + bru.getEnvVar("tableName"));
+  console.log("");
+  console.log("If you just sent data, it may take 5-15 minutes");
+  console.log("   to appear. First-time ingestion may take longer.");
+  console.log("════════════════════════════════════════════════════");
+}
+
+script:post-response {
+  const status = res.getStatus();
+  
+  console.log("");
+  console.log("════════════════════════════════════════════════════════════");
+  console.log("QUERY RESULTS: HTTP " + status);
+  console.log("════════════════════════════════════════════════════════════");
+  
+  if (status === 200) {
+    const body = res.getBody();
+    const tables = body.tables || [];
+    
+    if (tables.length > 0) {
+      const table = tables[0];
+      const columns = table.columns || [];
+      const rows = table.rows || [];
+      
+      if (rows.length === 0) {
+        console.log("NO DATA YET");
+        console.log("");
+        console.log("No test records found. This could mean:");
+        console.log("- Data hasn't been ingested yet (wait 5-15 min)");
+        console.log("- First-time ingestion to a new table can be slower");
+        console.log("- The ingestion request may have failed silently");
+        console.log("");
+        console.log("[FIX] NEXT STEPS:");
+        console.log("1. Wait 15 minutes and try this query again");
+        console.log("2. Re-run '5-Test-Ingestion / Send Test Data'");
+        console.log("3. Check DCR metrics in Azure Portal for errors");
+      } else {
+        console.log("[OK] DATA FOUND — " + rows.length + " record(s)");
+        console.log("");
+        
+        // Print column headers
+        const colNames = columns.map(function(c) { return c.name; });
+        console.log("Columns: " + colNames.join(" | "));
+        console.log("─".repeat(60));
+        
+        // Print rows (first 5)
+        const showRows = rows.slice(0, 5);
+        showRows.forEach(function(row, idx) {
+          const values = row.map(function(val, colIdx) {
+            const v = String(val || "null");
+            return v.substring(0, 25);
+          });
+          console.log("Row " + (idx + 1) + ": " + values.join(" | "));
+        });
+        
+        if (rows.length > 5) {
+          console.log("... and " + (rows.length - 5) + " more rows");
+        }
+        
+        console.log("");
+        console.log("════════════════════════════════════════════════════════════");
+        console.log("END-TO-END VALIDATION COMPLETE");
+        console.log("════════════════════════════════════════════════════════════");
+        console.log("Your Logs Ingestion API pipeline is working correctly:");
+        console.log("  [OK] Authentication");
+        console.log("  [OK] DCR configuration");
+        console.log("  [OK] Stream declarations");
+        console.log("  [OK] Data ingestion");
+        console.log("  [OK] Data queryable in Log Analytics");
+        console.log("════════════════════════════════════════════════════════════");
+      }
+    }
+  } else if (status === 403) {
+    console.log("[DENIED] ACCESS DENIED");
+    console.log("");
+    console.log("Your app needs 'Reader' role on the Log Analytics workspace");
+    console.log("to run queries via the API.");
+    console.log("");
+    console.log("Alternatively, you need Log Analytics API permissions:");
+    console.log("1. Azure Portal → App Registrations → your app");
+    console.log("2. API Permissions → Add → Log Analytics API");
+    console.log("3. Select 'Data.Read' delegated permission");
+  } else if (status === 404) {
+    console.log("[FAIL] WORKSPACE NOT FOUND");
+    console.log("");
+    console.log("Check your workspaceId environment variable.");
+    console.log("This should be the Log Analytics Workspace ID (GUID),");
+    console.log("not the workspace name or resource ID.");
+  } else {
+    console.log("[WARN] Unexpected response");
+    const body = res.getBody();
+    if (body && body.error) {
+      console.log("Error: " + body.error.message);
+      
+      if (String(body.error.message || "").indexOf("could not be found") >= 0) {
+        console.log("");
+        console.log("[FIX] The table may not exist yet or IntelliSense cache");
+        console.log("   hasn't updated. The cache can take up to 24 hours.");
+        console.log("   Try querying directly in the Azure Portal instead.");
+      }
+    } else if (body) {
+      console.log(JSON.stringify(body, null, 2));
+    }
+  }
+  
+  console.log("════════════════════════════════════════════════════════════");
+}
+
+tests {
+  test("Query should return results", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+}

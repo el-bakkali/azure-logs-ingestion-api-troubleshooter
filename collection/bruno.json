@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Azure Logs Ingestion API Troubleshooter",
+  "type": "collection",
+  "presets": {
+    "requestType": "http",
+    "requestUrl": ""
+  }
+}

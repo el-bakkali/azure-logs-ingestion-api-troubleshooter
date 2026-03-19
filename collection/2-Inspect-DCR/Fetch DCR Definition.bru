@@ -1,0 +1,141 @@
+meta {
+  name: Fetch DCR Definition
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{armBaseUrl}}/subscriptions/{{subscriptionId}}/resourceGroups/{{resourceGroup}}/providers/Microsoft.Insights/dataCollectionRules?api-version=2023-03-11
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{armToken}}
+}
+
+script:post-response {
+  const status = res.getStatus();
+  
+  if (status === 200) {
+    const body = res.getBody();
+    const rules = body.value || [];
+    
+    console.log("════════════════════════════════════════════════════════════");
+    console.log("DATA COLLECTION RULES IN RESOURCE GROUP");
+    console.log("════════════════════════════════════════════════════════════");
+    console.log("Resource Group: " + bru.getEnvVar("resourceGroup"));
+    console.log("Found: " + rules.length + " DCR(s)");
+    console.log("");
+    
+    rules.forEach(function(dcr, index) {
+      const props = dcr.properties || {};
+      const streams = props.streamDeclarations || {};
+      const flows = props.dataFlows || [];
+      
+      console.log("─────────────────────────────────────────────────");
+      console.log("DCR #" + (index + 1) + ": " + dcr.name);
+      console.log("─────────────────────────────────────────────────");
+      console.log("  Immutable ID: " + (props.immutableId || "N/A"));
+      console.log("  Location:     " + dcr.location);
+      console.log("  Kind:         " + (dcr.kind || "N/A"));
+      
+      if (props.endpoints && props.endpoints.logsIngestion) {
+        console.log("  Ingestion URL: " + props.endpoints.logsIngestion);
+      }
+      
+      // Stream declarations
+      const streamNames = Object.keys(streams);
+      if (streamNames.length > 0) {
+        console.log("");
+        console.log("  STREAM DECLARATIONS:");
+        streamNames.forEach(function(sName) {
+          const cols = streams[sName].columns || [];
+          console.log("    Stream: " + sName);
+          cols.forEach(function(col) {
+            console.log("      - " + col.name + " (" + col.type + ")");
+          });
+        });
+      }
+      
+      // Data flows
+      if (flows.length > 0) {
+        console.log("");
+        console.log("  DATA FLOWS:");
+        flows.forEach(function(flow) {
+          console.log("    Streams:      " + (flow.streams || []).join(", "));
+          console.log("    Output:       " + (flow.outputStream || "N/A"));
+          console.log("    Destinations: " + (flow.destinations || []).join(", "));
+          console.log("    Transform:    " + (flow.transformKql || "source"));
+        });
+      }
+      
+      console.log("");
+    });
+    
+    // Store first DCR details for later use
+    if (rules.length > 0) {
+      const targetDcrId = bru.getEnvVar("dcrImmutableId");
+      let targetDcr = rules.find(function(r) { 
+        return r.properties && r.properties.immutableId === targetDcrId; 
+      });
+      
+      if (!targetDcr && rules.length > 0) {
+        targetDcr = rules[0];
+        console.log("[WARN] DCR with immutable ID '" + targetDcrId + "' not found.");
+        console.log("   Using first DCR: " + targetDcr.name);
+        console.log("   Update your dcrImmutableId environment variable if needed.");
+        console.log("");
+      }
+      
+      if (targetDcr) {
+        const props = targetDcr.properties || {};
+        const streams = props.streamDeclarations || {};
+        const streamNames = Object.keys(streams);
+        
+        if (streamNames.length > 0) {
+          bru.setVar("dcrStreamColumns", JSON.stringify(streams));
+          bru.setVar("dcrName", targetDcr.name);
+        }
+        
+        if (props.dataFlows && props.dataFlows.length > 0) {
+          bru.setVar("transformKql", props.dataFlows[0].transformKql || "source");
+          bru.setVar("outputStream", props.dataFlows[0].outputStream || "");
+        }
+        
+        console.log("[OK] DCR '" + targetDcr.name + "' stored for schema validation.");
+      }
+    }
+    
+    console.log(">> Next step: Run '3-Fetch-Table-Schema / Get Table Columns'");
+    console.log("════════════════════════════════════════════════════════════");
+    
+  } else if (status === 403) {
+    console.log("════════════════════════════════════════════════════");
+    console.log("[FAIL] ACCESS DENIED (HTTP 403)");
+    console.log("════════════════════════════════════════════════════");
+    console.log("Your app does not have permission to read DCR definitions.");
+    console.log("");
+    console.log("[FIX] FIX:");
+    console.log("1. Go to Azure Portal → Data Collection Rules");
+    console.log("2. Select your DCR → Access Control (IAM)");
+    console.log("3. Add role assignment → 'Reader' role");
+    console.log("4. Assign to your app registration");
+    console.log("════════════════════════════════════════════════════");
+  } else if (status === 404) {
+    console.log("════════════════════════════════════════════════════");
+    console.log("[FAIL] NOT FOUND (HTTP 404)");
+    console.log("════════════════════════════════════════════════════");
+    console.log("Check your subscriptionId and resourceGroup values.");
+    console.log("════════════════════════════════════════════════════");
+  } else {
+    console.log("[FAIL] Unexpected error: HTTP " + status);
+    console.log(JSON.stringify(res.getBody(), null, 2));
+  }
+}
+
+tests {
+  test("Should fetch DCR list successfully", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+}

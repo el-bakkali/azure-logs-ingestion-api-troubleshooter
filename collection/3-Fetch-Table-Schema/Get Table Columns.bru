@@ -1,0 +1,79 @@
+meta {
+  name: Get Table Columns
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{armBaseUrl}}/subscriptions/{{subscriptionId}}/resourceGroups/{{resourceGroup}}/providers/Microsoft.OperationalInsights/workspaces/{{workspaceName}}/tables/{{tableName}}?api-version=2022-10-01
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{armToken}}
+}
+
+script:post-response {
+  const status = res.getStatus();
+  
+  if (status === 200) {
+    const body = res.getBody();
+    const props = body.properties || {};
+    const schema = props.schema || {};
+    const columns = schema.columns || [];
+    
+    console.log("════════════════════════════════════════════════════════════");
+    console.log("TABLE SCHEMA: " + (schema.name || bru.getEnvVar("tableName")));
+    console.log("════════════════════════════════════════════════════════════");
+    console.log("Table plan:     " + (props.plan || "N/A"));
+    console.log("Retention:      " + (props.retentionInDays || "N/A") + " days");
+    console.log("Total retention: " + (props.totalRetentionInDays || "N/A") + " days");
+    console.log("Columns:        " + columns.length);
+    console.log("");
+    
+    console.log("COLUMN NAME                    TYPE            SOURCE");
+    console.log("─────────────────────────────────────────────────────────");
+    
+    columns.forEach(function(col) {
+      const name = (col.name + "                              ").substring(0, 30);
+      const type = (col.type + "                ").substring(0, 15);
+      const source = col.isDefaultDisplay === false ? "system" : "custom";
+      console.log(name + " " + type + " " + source);
+    });
+    
+    // Store for comparison
+    bru.setVar("tableColumns", JSON.stringify(columns));
+    
+    console.log("");
+    console.log("[OK] Table schema stored for validation.");
+    console.log("");
+    console.log(">> Next step: Run '4-Validate-Payload / Schema Diff Check'");
+    console.log("════════════════════════════════════════════════════════════");
+    
+  } else if (status === 404) {
+    console.log("════════════════════════════════════════════════════");
+    console.log("[FAIL] TABLE NOT FOUND (HTTP 404)");
+    console.log("════════════════════════════════════════════════════");
+    console.log("Table '" + bru.getEnvVar("tableName") + "' does not exist in workspace");
+    console.log("'" + bru.getEnvVar("workspaceName") + "'.");
+    console.log("");
+    console.log("[FIX] CHECKLIST:");
+    console.log("- Custom tables must end with '_CL' suffix");
+    console.log("- The table must be created before sending data");
+    console.log("- Table name is case-sensitive");
+    console.log("");
+    console.log("  Example: If your table is 'MyTable_CL', set");
+    console.log("  tableName = MyTable_CL in the environment");
+    console.log("════════════════════════════════════════════════════");
+  } else {
+    console.log("[FAIL] Error: HTTP " + status);
+    console.log(JSON.stringify(res.getBody(), null, 2));
+  }
+}
+
+tests {
+  test("Should fetch table schema", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+}

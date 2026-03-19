@@ -1,0 +1,53 @@
+meta {
+  name: Get ARM Token
+  type: http
+  seq: 2
+}
+
+post {
+  url: https://login.microsoftonline.com/{{tenantId}}/oauth2/v2.0/token
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  client_id: {{clientId}}
+  client_secret: {{clientSecret}}
+  scope: https://management.azure.com//.default
+  grant_type: client_credentials
+}
+
+script:post-response {
+  const status = res.getStatus();
+  
+  if (status === 200) {
+    const body = res.getBody();
+    bru.setVar("armToken", body.access_token);
+    
+    console.log("════════════════════════════════════════════════════");
+    console.log("[OK] ARM TOKEN ACQUIRED");
+    console.log("════════════════════════════════════════════════════");
+    console.log("This token is used to fetch DCR and table definitions");
+    console.log("from the Azure Resource Manager API.");
+    console.log("");
+    console.log(">> Next step: Run '2-Inspect-DCR / Fetch DCR Definition'");
+    console.log("════════════════════════════════════════════════════");
+  } else {
+    console.log("════════════════════════════════════════════════════");
+    console.log("[FAIL] ARM TOKEN FAILED (HTTP " + status + ")");
+    console.log("════════════════════════════════════════════════════");
+    console.log("Your app may need additional permissions to read");
+    console.log("Azure Resource Manager resources (DCR definitions).");
+    console.log("");
+    console.log("[FIX] Ensure the app has 'Reader' role on the DCR or");
+    console.log("   resource group containing the DCR.");
+    console.log("════════════════════════════════════════════════════");
+  }
+}
+
+tests {
+  test("ARM token should be acquired", function() {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().access_token).to.be.a("string");
+  });
+}

@@ -1,0 +1,12 @@
+# Ignore environment secrets
+collection/environments/*.local.bru
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

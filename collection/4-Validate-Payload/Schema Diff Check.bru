@@ -1,0 +1,351 @@
+meta {
+  name: Schema Diff Check
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{ingestionEndpoint}}/dataCollectionRules/{{dcrImmutableId}}/streams/{{streamName}}?api-version=2023-01-01
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{bearerToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  [
+    {
+      "Time": "2025-01-01T00:00:00Z",
+      "Computer": "TestComputer",
+      "AdditionalContext": "{\"CounterName\":\"TestCounter\",\"CounterValue\":1.0}"
+    }
+  ]
+}
+
+script:pre-request {
+  // ═══════════════════════════════════════════════════════════
+  // SCHEMA DIFF ENGINE
+  // Compares your JSON payload against the DCR stream declaration
+  // ═══════════════════════════════════════════════════════════
+  
+  const dcrColumnsRaw = bru.getVar("dcrStreamColumns");
+  const streamName = bru.getEnvVar("streamName");
+  
+  if (!dcrColumnsRaw) {
+    console.log("════════════════════════════════════════════════════");
+    console.log("[WARN] NO DCR SCHEMA LOADED");
+    console.log("════════════════════════════════════════════════════");
+    console.log("Run '2-Inspect-DCR / Fetch DCR Definition' first");
+    console.log("to load the DCR stream declarations.");
+    console.log("════════════════════════════════════════════════════");
+    console.log("");
+    console.log("Skipping pre-flight validation. The request will");
+    console.log("still be sent — check the response for errors.");
+    return;
+  }
+  
+  const dcrStreams = JSON.parse(dcrColumnsRaw);
+  const targetStream = dcrStreams[streamName];
+  
+  if (!targetStream) {
+    console.log("════════════════════════════════════════════════════");
+    console.log("[FAIL] STREAM NOT FOUND IN DCR");
+    console.log("════════════════════════════════════════════════════");
+    console.log("Stream '" + streamName + "' does not exist in the DCR.");
+    console.log("");
+    console.log("Available streams:");
+    Object.keys(dcrStreams).forEach(function(s) {
+      console.log("  - " + s);
+    });
+    console.log("");
+    console.log("[FIX] FIX: Update the streamName in your environment");
+    console.log("   to match one of the streams listed above.");
+    console.log("════════════════════════════════════════════════════");
+    return;
+  }
+  
+  const expectedColumns = targetStream.columns || [];
+  
+  // Parse the request body
+  let payload;
+  try {
+    payload = JSON.parse(req.getBody());
+  } catch (e) {
+    console.log("[FAIL] Cannot parse request body as JSON: " + e.message);
+    return;
+  }
+  
+  const sampleRecord = Array.isArray(payload) ? payload[0] : payload;
+  
+  if (!sampleRecord || typeof sampleRecord !== "object") {
+    console.log("[FAIL] Request body must be a JSON array with at least one object.");
+    console.log("   Example: [{\"Column1\": \"value\", \"Column2\": 123}]");
+    return;
+  }
+  
+  // Build lookup maps (case-insensitive)
+  const expectedMap = {};
+  expectedColumns.forEach(function(col) {
+    expectedMap[col.name.toLowerCase()] = col;
+  });
+  
+  const actualKeys = Object.keys(sampleRecord);
+  const actualMap = {};
+  actualKeys.forEach(function(key) {
+    actualMap[key.toLowerCase()] = key;
+  });
+  
+  // Perform diff
+  const missing = [];
+  const matched = [];
+  const extra = [];
+  const typeMismatches = [];
+  
+  // Check expected columns against payload
+  expectedColumns.forEach(function(col) {
+    const lowerName = col.name.toLowerCase();
+    if (actualMap[lowerName]) {
+      matched.push({ expected: col, actual: actualMap[lowerName] });
+      
+      // Basic type check
+      const value = sampleRecord[actualMap[lowerName]];
+      const jsType = typeof value;
+      
+      if (col.type === "datetime" && jsType === "string") {
+        const d = new Date(value);
+        if (isNaN(d.getTime())) {
+          typeMismatches.push({
+            column: col.name,
+            expectedType: col.type,
+            actualValue: value,
+            issue: "Value '" + value + "' is not a valid datetime"
+          });
+        }
+      } else if (col.type === "int" || col.type === "long" || col.type === "real") {
+        if (jsType !== "number") {
+          typeMismatches.push({
+            column: col.name,
+            expectedType: col.type,
+            actualValue: value,
+            issue: "Expected numeric type but got " + jsType
+          });
+        }
+      } else if (col.type === "boolean" && jsType !== "boolean") {
+        typeMismatches.push({
+          column: col.name,
+          expectedType: col.type,
+          actualValue: value,
+          issue: "Expected boolean but got " + jsType
+        });
+      }
+    } else {
+      missing.push(col);
+    }
+  });
+  
+  // Check for extra columns in payload
+  actualKeys.forEach(function(key) {
+    if (!expectedMap[key.toLowerCase()]) {
+      extra.push(key);
+    }
+  });
+  
+  // Print report
+  console.log("════════════════════════════════════════════════════════════");
+  console.log("SCHEMA DIFF REPORT");
+  console.log("════════════════════════════════════════════════════════════");
+  console.log("Stream:  " + streamName);
+  console.log("DCR:     " + (bru.getVar("dcrName") || "unknown"));
+  console.log("");
+  
+  // Summary
+  const hasIssues = missing.length > 0 || typeMismatches.length > 0;
+  if (!hasIssues && extra.length === 0) {
+    console.log("[OK] PERFECT MATCH — All columns align with DCR schema");
+  } else if (hasIssues) {
+    console.log("[FAIL] MISMATCH DETECTED — Issues found (see below)");
+  } else {
+    console.log("[WARN] EXTRA COLUMNS — Payload has columns not in DCR (they will be ignored)");
+  }
+  
+  console.log("");
+  console.log("COLUMN                         STATUS     DCR TYPE    YOUR VALUE");
+  console.log("──────────────────────────────────────────────────────────────────");
+  
+  matched.forEach(function(m) {
+    const name = (m.expected.name + "                              ").substring(0, 30);
+    const type = (m.expected.type + "            ").substring(0, 11);
+    const val = String(sampleRecord[m.actual]).substring(0, 20);
+    console.log(name + " [OK] match   " + type + " " + val);
+  });
+  
+  missing.forEach(function(m) {
+    const name = (m.name + "                              ").substring(0, 30);
+    const type = (m.type + "            ").substring(0, 11);
+    console.log(name + " [FAIL] MISSING  " + type + " (not in payload)");
+  });
+  
+  extra.forEach(function(e) {
+    const name = (e + "                              ").substring(0, 30);
+    const val = String(sampleRecord[e]).substring(0, 20);
+    console.log(name + " [WARN] EXTRA   n/a         " + val);
+  });
+  
+  // Type mismatches
+  if (typeMismatches.length > 0) {
+    console.log("");
+    console.log("[TYPE] TYPE MISMATCHES:");
+    console.log("──────────────────────────────────────────────────────────────────");
+    typeMismatches.forEach(function(tm) {
+      console.log("  " + tm.column + ": DCR expects '" + tm.expectedType + "' — " + tm.issue);
+    });
+  }
+  
+  // Actionable fixes
+  if (missing.length > 0) {
+    console.log("");
+    console.log("[FIX] TO FIX MISSING COLUMNS:");
+    console.log("──────────────────────────────────────────────────────────────────");
+    console.log("Add these fields to your JSON payload:");
+    console.log("");
+    console.log("{");
+    missing.forEach(function(m, i) {
+      let example = '"..."';
+      if (m.type === "datetime") example = '"2025-01-01T00:00:00Z"';
+      else if (m.type === "int" || m.type === "long") example = '0';
+      else if (m.type === "real") example = '0.0';
+      else if (m.type === "boolean") example = 'true';
+      else if (m.type === "dynamic") example = '{}';
+      
+      const comma = i < missing.length - 1 ? "," : "";
+      console.log('  "' + m.name + '": ' + example + comma);
+    });
+    console.log("}");
+  }
+  
+  // Transform KQL info
+  const transformKql = bru.getVar("transformKql");
+  if (transformKql && transformKql !== "source") {
+    console.log("");
+    console.log("TRANSFORM KQL (applied by DCR after ingestion):");
+    console.log("──────────────────────────────────────────────────────────────────");
+    console.log(transformKql);
+  }
+  
+  console.log("");
+  console.log("════════════════════════════════════════════════════════════");
+}
+
+script:post-response {
+  const status = res.getStatus();
+  
+  console.log("");
+  console.log("════════════════════════════════════════════════════════════");
+  console.log("INGESTION RESULT: HTTP " + status);
+  console.log("════════════════════════════════════════════════════════════");
+  
+  const explanations = {
+    204: [
+      "[OK] SUCCESS — Data accepted by the ingestion pipeline!",
+      "",
+      "Your data has been accepted. It typically takes 5-15 minutes",
+      "to appear in the Log Analytics table.",
+      "",
+      ">> Next step: Wait 5-15 min, then run '6-Query-Results / Check Data Arrived'"
+    ],
+    400: [
+      "[FAIL] BAD REQUEST — The payload format is invalid.",
+      "",
+      "[FIX] COMMON CAUSES:",
+      "- The request body must be a JSON array: [{...}]",
+      "- Column names are case-sensitive",
+      "- Datetime values must be ISO 8601 format",
+      "- Check the schema diff report above for mismatches"
+    ],
+    403: [
+      "[DENIED] FORBIDDEN — Permission denied.",
+      "",
+      "[FIX] FIX:",
+      "1. Go to Azure Portal → Data Collection Rules → your DCR",
+      "2. Select Access Control (IAM) → Add role assignment",
+      "3. Role: 'Monitoring Metrics Publisher'",
+      "4. Assign to your app registration (Client ID: " + bru.getEnvVar("clientId") + ")",
+      "",
+      "Note: Role assignments can take up to 30 minutes to propagate."
+    ],
+    404: [
+      "[FAIL] NOT FOUND — DCR or stream not found.",
+      "",
+      "[FIX] CHECK THESE VALUES:",
+      "- DCR Immutable ID: " + bru.getEnvVar("dcrImmutableId"),
+      "- Stream Name: " + bru.getEnvVar("streamName"),
+      "- Endpoint: " + bru.getEnvVar("ingestionEndpoint"),
+      "",
+      "Common mistakes:",
+      "- Stream name format should be 'Custom-TableName' (without _CL)",
+      "- DCR immutable ID starts with 'dcr-'",
+      "- Endpoint URL should not have a trailing slash"
+    ],
+    413: [
+      "PAYLOAD TOO LARGE — Exceeds 1 MB per call.",
+      "",
+      "[FIX] FIX:",
+      "- Split your data into smaller batches (< 1 MB each)",
+      "- Maximum: 1 MB per API call (compressed or uncompressed)",
+      "- Consider using gzip compression (Content-Encoding: gzip)"
+    ],
+    429: [
+      "RATE LIMITED — API limits exceeded.",
+      "",
+      "Current limits:",
+      "- 500 MB of data per minute",
+      "- 300,000 requests per minute",
+      "",
+      "[FIX] FIX:",
+      "- Wait and retry after the duration in the Retry-After header",
+      "- Implement exponential backoff in your ingestion code",
+      "- Batch more records per API call to reduce request count"
+    ]
+  };
+  
+  const messages = explanations[status];
+  if (messages) {
+    messages.forEach(function(line) { console.log(line); });
+  } else {
+    console.log("[WARN] Unexpected response: HTTP " + status);
+    const body = res.getBody();
+    if (body) {
+      console.log("");
+      if (body.error) {
+        console.log("Error code: " + (body.error.code || body.error));
+        console.log("Message:    " + (body.error.message || ""));
+        
+        if (String(body.error.code || body.error).indexOf("RecordsTimeRangeIsMoreThan30Minutes") >= 0) {
+          console.log("");
+          console.log("[FIX] FIX: All records in a single API call must have");
+          console.log("timestamps within a 30-minute window. Split your data");
+          console.log("into batches grouped by time range.");
+          console.log("");
+          console.log("Note: This restriction does not apply to Auxiliary logs");
+          console.log("that use transformations.");
+        }
+      } else {
+        console.log(JSON.stringify(body, null, 2));
+      }
+    }
+  }
+  
+  console.log("════════════════════════════════════════════════════════════");
+}
+
+tests {
+  test("Ingestion should succeed with HTTP 204", function() {
+    expect(res.getStatus()).to.equal(204);
+  });
+}

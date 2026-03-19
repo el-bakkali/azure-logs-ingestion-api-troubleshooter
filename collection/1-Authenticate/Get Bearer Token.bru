@@ -1,0 +1,71 @@
+meta {
+  name: Get Bearer Token
+  type: http
+  seq: 1
+}
+
+post {
+  url: https://login.microsoftonline.com/{{tenantId}}/oauth2/v2.0/token
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  client_id: {{clientId}}
+  client_secret: {{clientSecret}}
+  scope: https://monitor.azure.com//.default
+  grant_type: client_credentials
+}
+
+script:post-response {
+  const status = res.getStatus();
+  
+  if (status === 200) {
+    const body = res.getBody();
+    bru.setVar("bearerToken", body.access_token);
+    bru.setVar("tokenExpiry", body.expires_in);
+    
+    console.log("════════════════════════════════════════════════════");
+    console.log("[OK] AUTHENTICATION SUCCESSFUL");
+    console.log("════════════════════════════════════════════════════");
+    console.log("Token acquired. Expires in: " + body.expires_in + " seconds");
+    console.log("Token type: " + body.token_type);
+    console.log("");
+    console.log(">> Next step: Run '2-Inspect-DCR / Fetch DCR Definition'");
+    console.log("════════════════════════════════════════════════════");
+  } else {
+    console.log("════════════════════════════════════════════════════");
+    console.log("[FAIL] AUTHENTICATION FAILED (HTTP " + status + ")");
+    console.log("════════════════════════════════════════════════════");
+    
+    const body = res.getBody();
+    if (body && body.error) {
+      console.log("Error: " + body.error);
+      console.log("Description: " + body.error_description);
+    }
+    
+    console.log("");
+    console.log("[FIX] TROUBLESHOOTING:");
+    console.log("─────────────────────────────────────────────────");
+    
+    if (status === 400) {
+      console.log("- Verify your clientId and clientSecret are correct");
+      console.log("- Ensure the app registration exists in tenant: " + bru.getEnvVar("tenantId"));
+      console.log("- Check that the client secret has not expired");
+    } else if (status === 401) {
+      console.log("- The tenantId may be incorrect");
+      console.log("- The app registration may have been deleted");
+    } else {
+      console.log("- Check your network connectivity");
+      console.log("- Verify the tenantId is a valid GUID");
+    }
+    console.log("════════════════════════════════════════════════════");
+  }
+}
+
+tests {
+  test("Authentication should succeed", function() {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().access_token).to.be.a("string");
+  });
+}

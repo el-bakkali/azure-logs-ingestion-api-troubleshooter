@@ -1,0 +1,128 @@
+meta {
+  name: Send Test Data
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{ingestionEndpoint}}/dataCollectionRules/{{dcrImmutableId}}/streams/{{streamName}}?api-version=2023-01-01
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{bearerToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  [
+    {
+      "Time": "{{currentTime}}",
+      "Computer": "TroubleshooterTest-1",
+      "AdditionalContext": "{\"InstanceName\":\"test\",\"CounterName\":\"TestMetric\",\"CounterValue\":42.0}"
+    },
+    {
+      "Time": "{{currentTime}}",
+      "Computer": "TroubleshooterTest-2",
+      "AdditionalContext": "{\"InstanceName\":\"test\",\"CounterName\":\"TestMetric\",\"CounterValue\":99.5}"
+    }
+  ]
+}
+
+script:pre-request {
+  // Set current timestamp
+  const now = new Date().toISOString();
+  bru.setVar("currentTime", now);
+  
+  console.log("════════════════════════════════════════════════════");
+  console.log("SENDING TEST DATA");
+  console.log("════════════════════════════════════════════════════");
+  console.log("Endpoint:     " + bru.getEnvVar("ingestionEndpoint"));
+  console.log("DCR ID:       " + bru.getEnvVar("dcrImmutableId"));
+  console.log("Stream:       " + bru.getEnvVar("streamName"));
+  console.log("Timestamp:    " + now);
+  console.log("Records:      2 (test records)");
+  console.log("════════════════════════════════════════════════════");
+  console.log("");
+  console.log("TIP: Edit the request body above to match your");
+  console.log("   actual data schema before sending.");
+}
+
+script:post-response {
+  const status = res.getStatus();
+  
+  console.log("");
+  console.log("════════════════════════════════════════════════════════════");
+  console.log("INGESTION RESPONSE: HTTP " + status);
+  console.log("════════════════════════════════════════════════════════════");
+  
+  if (status === 204) {
+    console.log("[OK] SUCCESS — Data accepted!");
+    console.log("");
+    console.log("Your 2 test records have been accepted by the pipeline.");
+    console.log("They should appear in the table within 5-15 minutes.");
+    console.log("");
+    console.log("Records sent with Computer values:");
+    console.log("  - TroubleshooterTest-1");
+    console.log("  - TroubleshooterTest-2");
+    console.log("");
+    console.log(">> Next step: Wait 5-15 min, then run");
+    console.log("   '6-Query-Results / Check Data Arrived'");
+    console.log("   to verify the data landed in the table.");
+  } else if (status === 403) {
+    console.log("[DENIED] FORBIDDEN — Missing 'Monitoring Metrics Publisher' role");
+    console.log("");
+    console.log("[FIX] HOW TO FIX:");
+    console.log("1. Azure Portal → Data Collection Rules → select your DCR");
+    console.log("2. Access Control (IAM) → Add role assignment");
+    console.log("3. Search for 'Monitoring Metrics Publisher'");
+    console.log("4. Members → select your app: " + bru.getEnvVar("clientId"));
+    console.log("5. Review + assign");
+    console.log("");
+    console.log("Wait up to 30 minutes for permissions to propagate.");
+  } else if (status === 404) {
+    console.log("[FAIL] NOT FOUND");
+    console.log("");
+    console.log("[FIX] VERIFY THESE VALUES:");
+    console.log("DCR Immutable ID: " + bru.getEnvVar("dcrImmutableId"));
+    console.log("Stream Name:      " + bru.getEnvVar("streamName"));
+    console.log("Endpoint:         " + bru.getEnvVar("ingestionEndpoint"));
+    console.log("");
+    console.log("Common mistakes:");
+    console.log("- Stream = 'Custom-TableName' (NOT 'Custom-TableName_CL')");
+    console.log("- DCR immutable ID starts with 'dcr-'");
+    console.log("- Don't include trailing slash in endpoint URL");
+  } else if (status === 413) {
+    console.log("PAYLOAD TOO LARGE (max 1 MB per call)");
+    console.log("Split your data into smaller batches.");
+  } else if (status === 429) {
+    const retryAfter = res.getHeader("Retry-After");
+    console.log("RATE LIMITED");
+    console.log("Retry after: " + (retryAfter || "unknown") + " seconds");
+    console.log("Limits: 500 MB/min, 300K requests/min");
+  } else {
+    console.log("[WARN] Unexpected response");
+    const body = res.getBody();
+    if (body) {
+      console.log(JSON.stringify(body, null, 2));
+      
+      if (body.error && String(body.error.code || "").indexOf("RecordsTimeRange") >= 0) {
+        console.log("");
+        console.log("[FIX] All records must have timestamps within 30 min of each other.");
+        console.log("   This is a known limitation being removed by Microsoft.");
+      }
+    }
+  }
+  
+  console.log("════════════════════════════════════════════════════════════");
+}
+
+tests {
+  test("Test ingestion should succeed with HTTP 204", function() {
+    expect(res.getStatus()).to.equal(204);
+  });
+}
