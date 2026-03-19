@@ -224,11 +224,100 @@ The Logs Ingestion API is a **REST endpoint** — you POST JSON data over HTTP t
 
 ---
 
-## Adapting to Your Schema
+## Setting Up a Demo Environment
 
-The collection ships with a sample schema matching the [official Azure tutorial](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/tutorial-logs-ingestion-api) (`Time`, `Computer`, `AdditionalContext`).
+If you don't have an existing Logs Ingestion API setup, or you want a clean environment to test the troubleshooter, use the included deployment script. It creates all the Azure resources needed and prints the values to paste into Bruno.
 
-**To use your own schema:**
+### What the script creates
+
+| Resource | Purpose |
+|----------|--------|
+| Resource group | Container for all demo resources |
+| Log Analytics workspace | Destination for ingested log data |
+| Custom table (`TestLogs_CL`) | Table with 5 columns: `TimeGenerated`, `Computer`, `Severity`, `Message`, `RequestDuration` |
+| Data Collection Rule | Defines the stream schema, KQL transform, and destination table |
+| Entra ID app registration | Provides client credentials for OAuth2 authentication |
+| RBAC role assignments | Monitoring Metrics Publisher (for ingestion) and Reader (for inspection) |
+
+### Usage
+
+```powershell
+# Default deployment (West Europe)
+.\Deploy-DemoEnvironment.ps1
+
+# Custom location and resource group
+.\Deploy-DemoEnvironment.ps1 -Location eastus -ResourceGroupName rg-my-demo
+```
+
+The script requires:
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) installed
+- Logged in via `az login`
+- Permissions to create resources and app registrations
+
+After the script completes, it prints all the environment values to paste into Bruno, plus the cleanup commands.
+
+### Demo stream schema
+
+The demo DCR expects the following columns in your JSON payload:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `Time` | datetime | Mapped to `TimeGenerated` by the DCR transform |
+| `Computer` | string | Source machine name |
+| `Severity` | string | Log level (e.g., Information, Warning, Error) |
+| `Message` | string | Log message content |
+| `RequestDuration` | real | Duration in milliseconds |
+
+The transform KQL (`source | extend TimeGenerated = Time | project-away Time`) renames `Time` to the required `TimeGenerated` column before storing.
+
+### Example: correct payload
+
+```json
+[
+  {
+    "Time": "2026-01-01T12:00:00Z",
+    "Computer": "WebServer-01",
+    "Severity": "Warning",
+    "Message": "High memory usage detected",
+    "RequestDuration": 245.8
+  }
+]
+```
+
+### Example: incorrect payload (for testing mismatch detection)
+
+```json
+[
+  {
+    "Timestamp": "2026-01-01T12:00:00Z",
+    "ServerName": "WebServer-01",
+    "Level": "Error",
+    "Content": "Something failed",
+    "Duration": 500.0
+  }
+]
+```
+
+The schema diff will report every column mismatch and suggest the correct field names.
+
+### Cleanup
+
+The script prints cleanup commands when it finishes. They look like:
+
+```powershell
+az group delete --name rg-ingestion-api-demo --yes --no-wait
+az ad app delete --id <your-app-client-id>
+```
+
+### RBAC propagation
+
+Role assignments can take up to 30 minutes to propagate. If you get HTTP 403 on ingestion immediately after setup, wait and retry.
+
+---
+
+## Adapting to Your Own Schema
+
+If you already have a DCR and table configured, you can use this troubleshooter against your existing setup:
 
 1. Run Steps 1-2 to authenticate and fetch your DCR definition
 2. Note the column names and types from the console output
@@ -243,6 +332,7 @@ The collection ships with a sample schema matching the [official Azure tutorial]
 azure-logs-ingestion-api-troubleshooter/
 ├── README.md
 ├── LICENSE
+├── Deploy-DemoEnvironment.ps1              ← Creates all Azure resources for testing
 ├── collection/
 │   ├── bruno.json                              ← Collection config
 │   ├── environments/
