@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: https://api.loganalytics.azure.com/v1/workspaces/{{workspaceId}}/query
+  url: {{armBaseUrl}}/subscriptions/{{subscriptionId}}/resourceGroups/{{resourceGroup}}/providers/Microsoft.OperationalInsights/workspaces/{{workspaceName}}/api/query?api-version=2020-08-01
   body: json
   auth: bearer
 }
