@@ -77,11 +77,11 @@ git clone https://github.com/el-bakkali/azure-logs-ingestion-api-troubleshooter.
 | `subscriptionId` | Azure subscription ID | `aaaa0a0a-bb1b-cc2c-dd3d-eeeeee4e4e4e` |
 | `resourceGroup` | Resource group containing the DCR | `rg-monitoring` |
 | `workspaceName` | Log Analytics workspace name | `my-workspace` |
-| `workspaceId` | Log Analytics workspace ID (GUID) | `aaaa0a0a-bb1b-cc2c-dd3d-eeeeee4e4e4e` |
 | `dcrImmutableId` | DCR immutable ID | `dcr-00000000000000000000000000000000` |
 | `ingestionEndpoint` | DCR or DCE logs ingestion endpoint | `https://my-dce.eastus-1.ingest.monitor.azure.com` |
 | `streamName` | Stream name in the DCR | `Custom-MyTable` |
 | `tableName` | Destination table name (with `_CL`) | `MyTable_CL` |
+| `armBaseUrl` | Azure Resource Manager base URL | `https://management.azure.com` |
 
 ### 4. Run the steps in order
 
