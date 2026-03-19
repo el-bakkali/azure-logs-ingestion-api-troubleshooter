@@ -72,13 +72,18 @@ script:pre-request {
   
   const expectedColumns = targetStream.columns || [];
   
-  // Parse the request body
+  // Parse the request body (Bruno may return string or already-parsed object)
   let payload;
-  try {
-    payload = JSON.parse(req.getBody());
-  } catch (e) {
-    console.log("[FAIL] Cannot parse request body as JSON: " + e.message);
-    return;
+  const rawBody = req.getBody();
+  if (typeof rawBody === "string") {
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (e) {
+      console.log("[FAIL] Cannot parse request body as JSON: " + e.message);
+      return;
+    }
+  } else {
+    payload = rawBody;
   }
   
   const sampleRecord = Array.isArray(payload) ? payload[0] : payload;
